@@ -25,9 +25,15 @@ random_state = 10123
 set_seed(random_state)
 model_path = os.path.join(os.path.dirname(__file__), "pretrained_model/all-MiniLM-L6-v2")
 limit_score = 0.15
-umap_model_n_components = 32
-vectorizer_model = CountVectorizer(stop_words="english")
+umap_model_n_components = 16
+vectorizer_model = CountVectorizer(stop_words=[])
 tokenizer = vectorizer_model.build_tokenizer()
+
+
+def cal_umap_n_components(length):
+    if length - 2 <= umap_model_n_components:
+        return min(length / 2, length - 2)
+    return umap_model_n_components
 
 
 class Cluster:
@@ -36,8 +42,8 @@ class Cluster:
                  model_path: str = model_path, ):
         self.texts = [clean_text(t) for t in texts]
         self.umap_model = UMAP(random_state=random_state, n_neighbors=15,
-                               n_components=umap_model_n_components if len(self.texts) - 2 > umap_model_n_components else len(self.texts) - 2, min_dist=0.0, metric=metric)
-        self.hdbscan_model = HDBSCAN(min_cluster_size=2, alpha=1.0, metric=metric,
+                               n_components=cal_umap_n_components(len(texts)), min_dist=0.0, metric=metric)
+        self.hdbscan_model = HDBSCAN(min_cluster_size=2, min_samples=2, metric=metric,
                                      cluster_selection_method="leaf"
                                      )
 
@@ -58,21 +64,22 @@ class Cluster:
 
     def run(self):
         topics, probabilities = self.topic_model.fit_transform(self.texts)
-        total_len = len(self.topic_model.topic_sizes_)
-        topic_info = {i: self.topic_model.get_topic(i) for i in range(total_len - 1)}
+        total_labels = self.topic_model.topic_labels_
+        topic_info = {i: self.topic_model.get_topic(i) for i in total_labels}
         import os
         original_token = None
         if "TOKENIZERS_PARALLELISM" in os.environ:
             original_token = os.environ["TOKENIZERS_PARALLELISM"]
         os.environ["TOKENIZERS_PARALLELISM"] = "false"
         coherence_scores = compute_coherence_scores(self.topic_model, self.texts, vectorizer_model)
-        topic_coherence = list(zip(range(len(coherence_scores)), coherence_scores))
+        topic_coherence = list(zip([i for i in total_labels], coherence_scores))
         if not original_token:
             os.environ.pop("TOKENIZERS_PARALLELISM")
 
         sorted_topics_by_coherence = sorted(topic_coherence, key=lambda x: x[1], reverse=True)
-        sorted_topics_by_coherence = [(process_same_words(topic_info[i]), j) for (i, j) in sorted_topics_by_coherence]
-        return sorted_topics_by_coherence
+        ret = [(process_same_words(topic_info[i]), j) for (i, j) in sorted_topics_by_coherence]
+        # ret = [process_same_words(topic) for _, topic in topic_info.items()]
+        return ret
 
 
 def process_same_words(data: list[tuple[str, float]]):
@@ -111,7 +118,7 @@ def compute_coherence_scores(topic_model, texts, vectorizer_model, coherence_met
     corpus = [dictionary.doc2bow(text) for text in cleaned_texts]
     topic_words = [
         [word for word, _ in topic_model.get_topic(topic)]
-        for topic in range(len(topic_model.get_topic_freq()) - 1)
+        for topic in topic_model.topic_labels_
     ]
     coherence_model = CoherenceModel(topics=topic_words, texts=cleaned_texts, corpus=corpus, dictionary=dictionary,
                                      coherence=coherence_metric)

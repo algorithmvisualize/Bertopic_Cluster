@@ -26,4 +26,4 @@ def get(data: list[str], metric: str="euclidean", temperature: float=0) -> list[
     res = trans_same_words(res)
     return res
 ```
-
+It's available to check sample inputs in `data` and sample outputs in `cluster_data`
